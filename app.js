@@ -27,13 +27,14 @@ class SpeechApp {
         this.textInput = document.getElementById('text-input');
         this.voiceSelect = document.getElementById('voice-select');
         this.autoDetectToggle = document.getElementById('auto-detect');
-        this.detectedLangLabel = document.getElementById('detected-lang');
+        this.autoDetectText = document.getElementById('auto-detect-text');
         this.chunkDisplay = document.getElementById('chunk-display');
         this.btnPlayPause = document.getElementById('btn-play-pause');
         this.btnRewind = document.getElementById('btn-rewind');
         this.btnStop = document.getElementById('btn-stop');
         this.iconPlay = this.btnPlayPause ? this.btnPlayPause.querySelector('.icon-play') : null;
         this.iconPause = this.btnPlayPause ? this.btnPlayPause.querySelector('.icon-pause') : null;
+        this.autoDetectLabelText = this.autoDetectText ? this.autoDetectText.textContent.trim() : 'Auto-detect language';
 
         this.init();
     }
@@ -668,15 +669,15 @@ class SpeechApp {
     }
 
     updateDetectedLangLabel(lang) {
-        if (!this.detectedLangLabel) return;
+        if (!this.autoDetectText) return;
 
-        if (!lang) {
-            this.detectedLangLabel.textContent = '';
+        if (!lang || !this.autoDetectToggle || !this.autoDetectToggle.checked) {
+            this.autoDetectText.textContent = this.autoDetectLabelText;
             return;
         }
 
         const label = this.formatLanguageLabel(lang);
-        this.detectedLangLabel.textContent = `Detected: ${label}`;
+        this.autoDetectText.textContent = `Auto-detected: ${label}`;
     }
 
     formatLanguageLabel(lang) {

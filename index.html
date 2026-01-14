@@ -33,7 +33,10 @@
 <body>
     <div class="container">
         <header>
-            <h1>Read Aloud</h1>
+            <h1>
+                <img src="icons/apple-touch-icon.png" alt="" class="app-logo" aria-hidden="true">
+                Read Aloud
+            </h1>
         </header>
 
         <main>
@@ -48,11 +51,10 @@
                         <option value="" disabled selected>Loading voices...</option>
                     </select>
                     <div class="auto-detect">
-                        <label for="auto-detect">
+                        <label for="auto-detect" id="auto-detect-label">
                             <input type="checkbox" id="auto-detect" checked>
-                            Auto-detect language
+                            <span id="auto-detect-text">Auto-detect language</span>
                         </label>
-                        <span id="detected-lang" class="detected-lang"></span>
                     </div>
                 </div>
 
