@@ -231,6 +231,7 @@ class SpeechApp {
         if (this.autoDetectToggle.checked) {
             this.applyAutoDetect(this.textInput.value, { force: true });
         } else {
+            this.updateDocumentLanguage('en');
             this.updateDetectedLangLabel('');
         }
     }
@@ -397,19 +398,27 @@ class SpeechApp {
 
     applyAutoDetect(text, { force = false } = {}) {
         if (!this.autoDetectToggle || !this.autoDetectToggle.checked) {
+            this.updateDocumentLanguage('en');
             this.updateDetectedLangLabel('');
             return;
         }
 
-        const lang = this.detectLanguage(this.prepareSpeechText(text));
-        if (!lang) {
+        const detection = this.detectLanguageInfo(this.prepareSpeechText(text));
+        if (!detection || !detection.lang) {
+            this.updateDocumentLanguage('en');
             this.updateDetectedLangLabel('');
             return;
         }
 
+        const { lang, shouldAutoSwitch } = detection;
+        this.updateDocumentLanguage(lang);
         this.updateDetectedLangLabel(lang);
 
         if (this.voices.length === 0) {
+            return;
+        }
+
+        if (!shouldAutoSwitch) {
             return;
         }
 
@@ -423,22 +432,20 @@ class SpeechApp {
         this.selectVoiceForLanguage(lang);
     }
 
-    detectLanguage(text) {
+    detectLanguageInfo(text) {
         // Script-first detection, then fall back to diacritics/keywords.
         const sample = (text || '').trim().slice(0, 4000);
-        if (!sample) return null;
+        if (!sample) {
+            return { lang: null, shouldAutoSwitch: false };
+        }
 
-        if (/[\u3040-\u309f\u30a0-\u30ff]/.test(sample)) {
-            return 'ja';
+        const cjkInfo = this.detectCjkLanguageInfo(sample);
+        if (cjkInfo) {
+            return cjkInfo;
         }
+
         if (/[\uac00-\ud7af]/.test(sample)) {
-            return 'ko';
-        }
-        if (/[\u3100-\u312f]/.test(sample)) {
-            return 'zh-TW';
-        }
-        if (/[\u4e00-\u9fff]/.test(sample)) {
-            return this.detectChineseVariant(sample);
+            return { lang: 'ko', shouldAutoSwitch: true };
         }
 
         const scriptChecks = [
@@ -451,7 +458,7 @@ class SpeechApp {
 
         for (const check of scriptChecks) {
             if (check.regex.test(sample)) {
-                return check.lang;
+                return { lang: check.lang, shouldAutoSwitch: true };
             }
         }
 
@@ -488,13 +495,78 @@ class SpeechApp {
         }
 
         if (bestLang && bestScore > 0) {
-            return bestLang;
+            return { lang: bestLang, shouldAutoSwitch: true };
         }
 
-        return navigator.language || 'en-US';
+        return { lang: navigator.language || 'en-US', shouldAutoSwitch: true };
     }
 
-    detectChineseVariant(text) {
+    detectCjkLanguageInfo(text) {
+        const counts = this.getCjkCounts(text);
+
+        // Bopomofo indicates Traditional Chinese.
+        if (counts.bopomofoCount > 0) {
+            return { lang: 'zh-TW', shouldAutoSwitch: true };
+        }
+
+        if (counts.hanCount === 0 && counts.kanaCount === 0) {
+            return null;
+        }
+
+        const signalCount = counts.hanCount + counts.kanaCount + counts.latinCount;
+        const hanRatio = signalCount > 0 ? counts.hanCount / signalCount : 0;
+        const kanaRatio = signalCount > 0 ? counts.kanaCount / signalCount : 0;
+
+        // If Han characters dominate, prefer Chinese even with mixed scripts.
+        if (hanRatio >= 0.55) {
+            const variant = this.detectChineseVariantWithConfidence(text);
+            return { lang: variant.lang, shouldAutoSwitch: true };
+        }
+
+        // Strong kana presence implies Japanese.
+        if (counts.kanaCount >= 6 && kanaRatio >= 0.2) {
+            return { lang: 'ja', shouldAutoSwitch: true };
+        }
+
+        if (counts.kanaCount > 0) {
+            return { lang: 'ja', shouldAutoSwitch: false };
+        }
+
+        const variant = this.detectChineseVariantWithConfidence(text);
+        return {
+            lang: variant.lang,
+            shouldAutoSwitch: variant.confidence === 'high'
+        };
+    }
+
+    getCjkCounts(text) {
+        let hanCount = 0;
+        let kanaCount = 0;
+        let bopomofoCount = 0;
+        let latinCount = 0;
+
+        for (const char of text) {
+            if (/[\u4e00-\u9fff]/.test(char)) {
+                hanCount += 1;
+                continue;
+            }
+            if (/[\u3040-\u309f\u30a0-\u30ff\u31f0-\u31ff]/.test(char)) {
+                kanaCount += 1;
+                continue;
+            }
+            if (/[\u3100-\u312f]/.test(char)) {
+                bopomofoCount += 1;
+                continue;
+            }
+            if (/[A-Za-z]/.test(char)) {
+                latinCount += 1;
+            }
+        }
+
+        return { hanCount, kanaCount, bopomofoCount, latinCount };
+    }
+
+    detectChineseVariantWithConfidence(text) {
         // Simple heuristic: count traditional vs simplified characters.
         const sample = (text || '').slice(0, 4000);
         const { traditionalChars, simplifiedChars } = this.getChineseCharSets();
@@ -506,19 +578,35 @@ class SpeechApp {
             if (simplifiedChars.has(char)) simpCount += 1;
         }
 
-        if (tradCount === 0 && simpCount === 0) {
+        const total = tradCount + simpCount;
+        let lang = null;
+        if (tradCount > simpCount) {
+            lang = 'zh-TW';
+        } else if (simpCount > tradCount) {
+            lang = 'zh-CN';
+        } else {
             const locale = navigator.language || '';
             if (locale.toLowerCase().startsWith('zh-tw') || locale.toLowerCase().startsWith('zh-hk')) {
-                return 'zh-TW';
+                lang = 'zh-TW';
+            } else {
+                lang = 'zh-CN';
             }
-            return 'zh-CN';
         }
 
-        if (tradCount > simpCount) {
-            return 'zh-TW';
+        let confidence = 'low';
+        if (total >= 6) {
+            confidence = 'high';
+        } else if (total >= 3) {
+            const maxCount = Math.max(tradCount, simpCount);
+            const minCount = Math.min(tradCount, simpCount);
+            if (minCount === 0 || maxCount / minCount >= 1.6) {
+                confidence = 'high';
+            } else {
+                confidence = 'medium';
+            }
         }
 
-        return 'zh-CN';
+        return { lang, confidence, totalMarkers: total };
     }
 
     getChineseCharSets() {
@@ -678,6 +766,12 @@ class SpeechApp {
 
         const label = this.formatLanguageLabel(lang);
         this.autoDetectText.textContent = `Auto-detected: ${label}`;
+    }
+
+    updateDocumentLanguage(lang) {
+        const html = document.documentElement;
+        if (!html) return;
+        html.lang = lang || 'en';
     }
 
     formatLanguageLabel(lang) {
