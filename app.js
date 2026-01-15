@@ -14,13 +14,19 @@ class SpeechApp {
         this.speakTimeoutId = null;
         this.speakRequestId = 0;
         this.detectTimeoutId = null;
+        this.selectedVoiceKey = '';
+        this.voiceFilterLang = '';
+        this.detectedLang = '';
+        this.lastVoiceRefreshAt = 0;
 
         this.storage = this.getStorage();
         this.storageEnabled = Boolean(this.storage);
         this.storageKeys = {
             text: 'speechApp:text',
-            progress: 'speechApp:progress'
+            progress: 'speechApp:progress',
+            voicePrefs: 'speechApp:voicePrefs'
         };
+        this.voicePreferences = {};
         this.lastStoredText = '';
 
         // DOM elements
@@ -65,27 +71,60 @@ class SpeechApp {
         if (this.voices.length === 0) {
             setTimeout(() => {
                 this.voices = this.synth.getVoices();
-                this.populateVoiceList();
+                this.populateVoiceList({ skipAutoDetect: true });
+                this.applyAutoDetectIfNeeded({ force: true });
             }, 100);
             return;
         }
-        this.populateVoiceList();
+        this.populateVoiceList({ skipAutoDetect: true });
+        this.applyAutoDetectIfNeeded({ force: true });
     }
 
-    populateVoiceList() {
+    refreshVoicesFromInput() {
+        if (!this.synth) return false;
+        const now = Date.now();
+        if (now - this.lastVoiceRefreshAt < 1000) return false;
+        this.lastVoiceRefreshAt = now;
+        this.loadVoices();
+        return true;
+    }
+
+    populateVoiceList({ filterLang = this.voiceFilterLang, skipAutoDetect = false } = {}) {
+        if (!this.voiceSelect) return;
+        const filterBase = this.getVoiceFilterBase(filterLang);
+        const previousKey = this.selectedVoiceKey || this.getVoiceKey(this.getSelectedVoice());
         this.voiceSelect.innerHTML = '';
         const fragment = document.createDocumentFragment();
+        let restoredSelection = false;
+        let added = 0;
         this.voices.forEach((voice, index) => {
+            if (filterBase && !this.voiceMatchesFilter(voice, filterBase)) {
+                return;
+            }
             const option = document.createElement('option');
             option.textContent = `${voice.name} (${voice.lang})`;
             option.setAttribute('data-lang', voice.lang);
             option.setAttribute('data-name', voice.name);
             option.value = index;
-            if (voice.default) option.selected = true;
+            const voiceKey = this.getVoiceKey(voice);
+            if (previousKey && voiceKey === previousKey) {
+                option.selected = true;
+                restoredSelection = true;
+            } else if (!previousKey && voice.default) {
+                option.selected = true;
+            }
             fragment.appendChild(option);
+            added += 1;
         });
+        if (added === 0 && filterBase) {
+            this.voiceFilterLang = '';
+            return this.populateVoiceList({ filterLang: '', skipAutoDetect });
+        }
         this.voiceSelect.appendChild(fragment);
-        this.applyAutoDetect(this.textInput.value, { force: true });
+        this.selectedVoiceKey = this.getVoiceKey(this.getSelectedVoice());
+        if (!skipAutoDetect && !restoredSelection) {
+            this.applyAutoDetect(this.textInput.value, { force: true });
+        }
     }
 
     addEventListeners() {
@@ -93,6 +132,16 @@ class SpeechApp {
         this.btnRewind.addEventListener('click', () => this.handleRewind());
         this.btnStop.addEventListener('click', () => this.handleStop());
         this.textInput.addEventListener('input', () => this.handleTextInputChange());
+        if (this.voiceSelect) {
+            this.voiceSelect.addEventListener('change', () => {
+                const selected = this.getSelectedVoice();
+                this.selectedVoiceKey = this.getVoiceKey(selected);
+                const prefKey = this.getVoicePreferenceKey(selected);
+                if (prefKey && selected) {
+                    this.setVoicePreference(prefKey, this.selectedVoiceKey);
+                }
+            });
+        }
         if (this.autoDetectToggle) {
             this.autoDetectToggle.addEventListener('change', () => this.handleAutoDetectToggle());
         }
@@ -229,16 +278,53 @@ class SpeechApp {
             this.storageEnabled = false;
             return;
         }
-        if (!storedProgress) return;
+        if (storedProgress) {
+            try {
+                const parsed = JSON.parse(storedProgress);
+                if (parsed && parsed.text === this.textInput.value && Number.isFinite(parsed.index)) {
+                    this.currentChunkIndex = Math.max(0, parsed.index);
+                }
+            } catch (error) {
+                // Ignore invalid progress payloads.
+            }
+        }
+
+        this.loadVoicePreferences();
+    }
+
+    loadVoicePreferences() {
+        if (!this.storage) return;
+        let storedPrefs = null;
+        try {
+            storedPrefs = this.storage.getItem(this.storageKeys.voicePrefs);
+        } catch (error) {
+            this.storageEnabled = false;
+            return;
+        }
+        if (!storedPrefs) return;
 
         try {
-            const parsed = JSON.parse(storedProgress);
-            if (parsed && parsed.text === this.textInput.value && Number.isFinite(parsed.index)) {
-                this.currentChunkIndex = Math.max(0, parsed.index);
-            }
+            const parsed = JSON.parse(storedPrefs);
+            if (!parsed || typeof parsed !== 'object') return;
+            const next = {};
+            Object.entries(parsed).forEach(([key, value]) => {
+                if (typeof value !== 'string') return;
+                next[key.toLowerCase()] = value;
+            });
+            this.voicePreferences = next;
         } catch (error) {
             return;
         }
+    }
+
+    saveVoicePreferences() {
+        this.safeSetItem(this.storageKeys.voicePrefs, JSON.stringify(this.voicePreferences));
+    }
+
+    setVoicePreference(langKey, voiceKey) {
+        if (!langKey || !voiceKey) return;
+        this.voicePreferences[langKey] = voiceKey;
+        this.saveVoicePreferences();
     }
 
     saveContentToStorage(text) {
@@ -294,7 +380,10 @@ class SpeechApp {
 
         this.detectTimeoutId = setTimeout(() => {
             this.detectTimeoutId = null;
-            this.applyAutoDetect(this.textInput.value);
+            const refreshed = this.refreshVoicesFromInput();
+            if (!refreshed) {
+                this.applyAutoDetect(this.textInput.value);
+            }
         }, 200);
     }
 
@@ -304,6 +393,8 @@ class SpeechApp {
         if (this.autoDetectToggle.checked) {
             this.applyAutoDetect(this.textInput.value, { force: true });
         } else {
+            this.detectedLang = '';
+            this.clearVoiceFilter();
             this.updateDocumentLanguage('en');
             this.updateDetectedLangLabel('');
         }
@@ -469,6 +560,12 @@ class SpeechApp {
         }
     }
 
+    applyAutoDetectIfNeeded({ force = false } = {}) {
+        if (!this.autoDetectToggle || !this.autoDetectToggle.checked) return;
+        if (!this.textInput) return;
+        this.applyAutoDetect(this.textInput.value, { force });
+    }
+
     applyAutoDetect(text, { force = false } = {}) {
         if (!this.autoDetectToggle || !this.autoDetectToggle.checked) {
             this.updateDocumentLanguage('en');
@@ -478,14 +575,18 @@ class SpeechApp {
 
         const detection = this.detectLanguageInfo(this.prepareSpeechText(text));
         if (!detection || !detection.lang) {
+            this.detectedLang = '';
+            this.clearVoiceFilter();
             this.updateDocumentLanguage('en');
             this.updateDetectedLangLabel('');
             return;
         }
 
         const { lang, shouldAutoSwitch } = detection;
+        this.detectedLang = lang;
         this.updateDocumentLanguage(lang);
         this.updateDetectedLangLabel(lang);
+        this.updateVoiceFilter(lang);
 
         if (this.voices.length === 0) {
             return;
@@ -724,23 +825,42 @@ class SpeechApp {
     selectVoiceForLanguage(lang) {
         if (!lang || this.voices.length === 0 || !this.voiceSelect) return false;
 
-        const matches = this.getVoiceMatchesForLanguage(lang);
+        let matches = this.getVoiceMatchesForLanguage(lang);
+        if (this.voiceFilterLang) {
+            matches = matches.filter(match => this.voiceMatchesFilter(match.voice, this.voiceFilterLang));
+        }
         if (matches.length === 0) return false;
 
+        const preferredKey = this.getStoredVoicePreference(lang);
+        const preferredMatch = this.findVoiceMatchByKey(matches, preferredKey);
+        const naturalMatches = matches.filter(match => match.isMicrosoftNatural);
         const googleMatches = matches.filter(match => match.isGoogle);
         const pickBest = (items) => {
             if (items.length === 0) return null;
             return items.sort((a, b) => {
                 if (a.rank !== b.rank) return a.rank - b.rank;
+                if (a.isPreview !== b.isPreview) return a.isPreview ? 1 : -1;
                 if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
                 return 0;
             })[0];
         };
 
-        const selection = pickBest(googleMatches) || pickBest(matches);
+        let selection = null;
+        if (preferredMatch) {
+            if (preferredMatch.isMicrosoftNatural) {
+                selection = preferredMatch;
+            } else if (naturalMatches.length === 0) {
+                selection = preferredMatch;
+            }
+        }
+
+        if (!selection) {
+            selection = pickBest(naturalMatches) || pickBest(googleMatches) || pickBest(matches);
+        }
         if (!selection) return false;
 
         this.voiceSelect.value = String(selection.index);
+        this.selectedVoiceKey = this.getVoiceKey(selection.voice);
         return true;
     }
 
@@ -777,7 +897,9 @@ class SpeechApp {
                 voice,
                 index,
                 rank,
+                isMicrosoftNatural: this.isMicrosoftNaturalVoice(voice),
                 isGoogle: this.isGoogleVoice(voice),
+                isPreview: this.isPreviewVoice(voice),
                 isDefault: Boolean(voice.default)
             });
         });
@@ -795,9 +917,8 @@ class SpeechApp {
             }
         };
 
-        add(normalized);
-
         if (base === 'zh') {
+            add(normalized);
             if (normalized.includes('tw') || normalized.includes('hant')) {
                 add('zh-hant');
                 add('cmn-hant');
@@ -810,7 +931,15 @@ class SpeechApp {
                 add('cmn');
                 add('zh');
             }
+        } else if (base === 'en') {
+            if (normalized.includes('-')) {
+                add(normalized);
+            }
+            add('en-us');
+            add('en-gb');
+            add('en');
         } else {
+            add(normalized);
             add(base);
         }
 
@@ -820,6 +949,77 @@ class SpeechApp {
     isGoogleVoice(voice) {
         if (!voice || !voice.name) return false;
         return voice.name.toLowerCase().includes('google');
+    }
+
+    isMicrosoftNaturalVoice(voice) {
+        if (!voice || !voice.name) return false;
+        const name = voice.name.toLowerCase();
+        return name.includes('microsoft') && name.includes('natural');
+    }
+
+    isPreviewVoice(voice) {
+        if (!voice || !voice.name) return false;
+        return voice.name.toLowerCase().includes('preview');
+    }
+
+    getVoiceKey(voice) {
+        if (!voice) return '';
+        if (voice.voiceURI) return `uri:${voice.voiceURI}`;
+        return `name:${voice.name || ''}|lang:${voice.lang || ''}`;
+    }
+
+    getLanguagePreferenceKey(lang) {
+        const normalized = (lang || '').toLowerCase();
+        if (!normalized) return '';
+        const base = normalized.split('-')[0];
+        if (base === 'zh') {
+            return normalized;
+        }
+        return base;
+    }
+
+    getVoicePreferenceKey(voice) {
+        const hasAutoDetect = this.autoDetectToggle && this.autoDetectToggle.checked;
+        const lang = hasAutoDetect && this.detectedLang ? this.detectedLang : (voice ? voice.lang : '');
+        return this.getLanguagePreferenceKey(lang);
+    }
+
+    getStoredVoicePreference(lang) {
+        const key = this.getLanguagePreferenceKey(lang);
+        if (!key) return '';
+        return this.voicePreferences[key] || '';
+    }
+
+    findVoiceMatchByKey(matches, voiceKey) {
+        if (!voiceKey) return null;
+        return matches.find(match => this.getVoiceKey(match.voice) === voiceKey) || null;
+    }
+
+    getVoiceFilterBase(lang) {
+        if (!lang) return '';
+        return String(lang).toLowerCase().split('-')[0];
+    }
+
+    voiceMatchesFilter(voice, filterBase) {
+        if (!filterBase) return true;
+        if (!voice || !voice.lang) return false;
+        const normalized = voice.lang.toLowerCase();
+        return normalized === filterBase || normalized.startsWith(`${filterBase}-`);
+    }
+
+    updateVoiceFilter(lang) {
+        const filterBase = this.getVoiceFilterBase(lang);
+        if (filterBase === this.voiceFilterLang) return;
+        this.voiceFilterLang = filterBase;
+        if (this.voices.length === 0) return;
+        this.populateVoiceList({ filterLang: filterBase, skipAutoDetect: true });
+    }
+
+    clearVoiceFilter() {
+        if (!this.voiceFilterLang) return;
+        this.voiceFilterLang = '';
+        if (this.voices.length === 0) return;
+        this.populateVoiceList({ filterLang: '', skipAutoDetect: true });
     }
 
     getSelectedVoice() {
