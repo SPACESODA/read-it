@@ -117,10 +117,9 @@ export const speechMethods = {
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
             if (char === '\n') {
-                if (buffer.trim()) {
-                    sentences.push(buffer.trim());
+                if (buffer && !buffer.endsWith(' ')) {
+                    buffer += ' ';
                 }
-                buffer = '';
                 continue;
             }
 
@@ -179,10 +178,9 @@ export const speechMethods = {
         for (let i = 0; i < text.length; i++) {
             const char = text[i];
             if (char === '\n') {
-                if (buffer.trim()) {
-                    parts.push(buffer.trim());
+                if (buffer && !buffer.endsWith(' ')) {
+                    buffer += ' ';
                 }
-                buffer = '';
                 continue;
             }
 
