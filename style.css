@@ -218,9 +218,42 @@ textarea {
     resize: none;
     outline: none;
     font-family: inherit;
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
     overflow-wrap: anywhere;
     word-break: break-word;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+textarea.is-drop-target {
+    border-color: var(--primary-color);
+    background-color: rgba(10, 132, 255, 0.08);
+    box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.2);
+}
+
+textarea.is-drop-blocked {
+    border-color: rgba(255, 69, 58, 0.55);
+    background-color: rgba(255, 69, 58, 0.08);
+    cursor: not-allowed;
+}
+
+textarea::-webkit-scrollbar {
+    width: 10px;
+}
+
+textarea::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+textarea::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+}
+
+textarea::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.32);
 }
 
 .helper-text {

@@ -166,7 +166,13 @@ class SpeechApp {
             });
         }
         this.btnStop.addEventListener('click', () => this.handleStop());
-        this.textInput.addEventListener('input', () => this.handleTextInputChange());
+        if (this.textInput) {
+            this.textInput.addEventListener('input', () => this.handleTextInputChange());
+            this.textInput.addEventListener('dragenter', (event) => this.handleTextDragEnter(event));
+            this.textInput.addEventListener('dragover', (event) => this.handleTextDragOver(event));
+            this.textInput.addEventListener('dragleave', (event) => this.handleTextDragLeave(event));
+            this.textInput.addEventListener('drop', (event) => this.handleTextDrop(event));
+        }
         if (this.voiceSelect) {
             this.voiceSelect.addEventListener('change', () => {
                 const selected = this.getSelectedVoice();
@@ -376,6 +382,112 @@ class SpeechApp {
             console.warn('Clipboard read failed', error);
             this.textInput.focus();
         }
+    }
+
+    handleTextDragEnter(event) {
+        if (!event || !this.textInput) return;
+        if (!this.hasFileDrop(event)) return;
+        event.preventDefault();
+        const canAccept = this.canAcceptTextDrop(event);
+        this.setDropTargetState(canAccept, !canAccept);
+    }
+
+    handleTextDragOver(event) {
+        if (!event || !this.textInput) return;
+        if (!this.hasFileDrop(event)) return;
+        event.preventDefault();
+        const canAccept = this.canAcceptTextDrop(event);
+        this.setDropTargetState(canAccept, !canAccept);
+        event.dataTransfer.dropEffect = canAccept ? 'copy' : 'none';
+    }
+
+    handleTextDragLeave(event) {
+        if (!event || !this.textInput) return;
+        this.setDropTargetState(false, false);
+    }
+
+    handleTextDrop(event) {
+        if (!event || !this.textInput) return;
+        if (!this.hasFileDrop(event)) return;
+        event.preventDefault();
+        this.setDropTargetState(false, false);
+        if (!this.canAcceptTextDrop(event)) return;
+        const file = this.getDropTextFile(event);
+        if (!file) return;
+        this.readFileAsText(file)
+            .then((text) => {
+                if (!text) return;
+                this.textInput.value = text;
+                this.handleTextInputChange();
+                this.textInput.focus();
+            })
+            .catch((error) => {
+                console.warn('File read failed', error);
+                this.textInput.focus();
+            });
+    }
+
+    setDropTargetState(isActive, isBlocked) {
+        if (!this.textInput) return;
+        this.textInput.classList.toggle('is-drop-target', isActive);
+        this.textInput.classList.toggle('is-drop-blocked', isBlocked);
+    }
+
+    hasFileDrop(event) {
+        const dataTransfer = event.dataTransfer;
+        if (!dataTransfer) return false;
+        const types = Array.from(dataTransfer.types || []);
+        if (types.includes('Files')) return true;
+        const items = Array.from(dataTransfer.items || []);
+        if (items.some((item) => item.kind === 'file')) return true;
+        const files = Array.from(dataTransfer.files || []);
+        return files.length > 0;
+    }
+
+    canAcceptTextDrop(event) {
+        if (!event || !this.textInput) return false;
+        if (this.textInput.value.length > 0) return false;
+        const dataTransfer = event.dataTransfer;
+        if (!dataTransfer) return false;
+        const items = Array.from(dataTransfer.items || []).filter((item) => item.kind === 'file');
+        const files = Array.from(dataTransfer.files || []);
+        const fileCount = files.length || items.length;
+        if (fileCount > 1) return false;
+        const candidate = items[0] || files[0];
+        if (candidate && candidate.type && !this.isAllowedDropMime(candidate.type)) return false;
+        return true;
+    }
+
+    getDropTextFile(event) {
+        const dataTransfer = event.dataTransfer;
+        if (!dataTransfer) return null;
+        const files = Array.from(dataTransfer.files || []);
+        if (files.length !== 1) return null;
+        const file = files[0];
+        const isAllowedType = this.isAllowedDropMime(file.type);
+        const isAllowedName = this.isAllowedDropName(file.name);
+        if (!isAllowedType && !isAllowedName) return null;
+        return file;
+    }
+
+    isAllowedDropMime(mimeType) {
+        if (!mimeType) return true;
+        return mimeType === 'text/plain' || mimeType === 'text/markdown';
+    }
+
+    isAllowedDropName(fileName) {
+        if (!fileName) return false;
+        const lower = fileName.toLowerCase();
+        return lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.markdown');
+    }
+
+    readFileAsText(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(reader.error || new Error('File read failed'));
+            reader.readAsText(file);
+        });
     }
 
     isChromeBrowser() {
