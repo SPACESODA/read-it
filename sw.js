@@ -1,4 +1,5 @@
 // Service worker: caches the app shell for offline use and updates cache on fetch.
+const CACHE_PREFIX = 'read-txt-';
 const CACHE_NAME = 'read-txt-v6';
 // Pre-cache the core app shell for offline use.
 self.addEventListener('install', (event) => {
@@ -29,7 +30,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((keys) => {
-            const keysToDelete = keys.filter((key) => key !== CACHE_NAME);
+            const keysToDelete = keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME);
             return Promise.all(keysToDelete.map((key) => caches.delete(key)));
         })
     );
@@ -45,7 +46,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
         fetch(event.request)
             .then((networkResponse) => {
-                if (!networkResponse || !networkResponse.ok) {
+                if (!networkResponse) {
+                    return caches.match(event.request);
+                }
+                if (!networkResponse.ok) {
                     return networkResponse;
                 }
                 const responseClone = networkResponse.clone();
