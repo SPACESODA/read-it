@@ -1,6 +1,8 @@
+const CACHE_NAME = 'read-txt-v6';
+// Pre-cache the core app shell for offline use.
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open('read-txt-v6').then((cache) => {
+        caches.open(CACHE_NAME).then((cache) => {
             return cache.addAll([
                 './',
                 './index.html',
@@ -22,17 +24,19 @@ self.addEventListener('install', (event) => {
     self.skipWaiting();
 });
 
+// Clear old caches when a new service worker activates.
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((keys) => {
             return Promise.all(
-                keys.map((key) => (key === 'read-txt-v6' ? null : caches.delete(key)))
+                keys.map((key) => (key === CACHE_NAME ? null : caches.delete(key)))
             );
         })
     );
     self.clients.claim();
 });
 
+// Network-first fetch with cache fallback.
 self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
     const url = new URL(event.request.url);
@@ -45,7 +49,7 @@ self.addEventListener('fetch', (event) => {
                     return networkResponse;
                 }
                 const responseClone = networkResponse.clone();
-                    caches.open('read-txt-v6').then((cache) => cache.put(event.request, responseClone));
+                caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
                 return networkResponse;
             })
             .catch(() => {

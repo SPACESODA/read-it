@@ -363,6 +363,7 @@ export const speechMethods = {
 
     detectLanguageInfo(text) {
         // Script-first detection, then fall back to diacritics/keywords.
+        // Limit sample size to keep detection fast on large inputs.
         const sample = (text || '').trim().slice(0, 4000);
         if (!sample) {
             return { lang: null, shouldAutoSwitch: false };
@@ -392,6 +393,7 @@ export const speechMethods = {
         }
 
         const lower = sample.toLowerCase();
+        // Turkish casing needs locale-aware lowercasing for dotted İ/ı.
         const turkishLower = sample.toLocaleLowerCase('tr');
         const scores = new Map();
         const addScore = (lang, regex, weight = 1, source = lower) => {
@@ -399,6 +401,7 @@ export const speechMethods = {
             if (!matches) return;
             scores.set(lang, (scores.get(lang) || 0) + matches.length * weight);
         };
+        // Prefer Unicode-aware word boundaries when the runtime supports them.
         let supportsUnicodeWordBoundary = false;
         try {
             new RegExp('\\p{L}', 'u');
@@ -440,6 +443,7 @@ export const speechMethods = {
         addWordScore('sv', 'och|det|att|som|med');
         addWordScore('da', 'og|det|at|som|for|med|er');
         addWordScore('no', 'og|det|at|som|for|med|er');
+        // Small high-signal words to separate Danish vs Norwegian.
         addWordScore('da', 'hvad|mig|dig|jer', 2);
         addWordScore('no', 'hva|meg|deg|dere', 2);
 

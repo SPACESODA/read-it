@@ -72,6 +72,7 @@ export const storageMethods = {
             this.safeSetItem(this.storageKeys.slots, JSON.stringify(slots));
         }
 
+        // Normalize stored slots to the current slotCount.
         let normalizedSlots = false;
         if (slots.length < this.slotCount) {
             const needed = this.slotCount - slots.length;

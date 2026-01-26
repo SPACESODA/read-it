@@ -419,6 +419,7 @@ export const uiMethods = {
 
         this.updatePasteButtonState();
 
+        // Debounced language detection while typing.
         if (!this.autoDetectToggle || !this.autoDetectToggle.checked) return;
 
         if (this.detectTimeoutId) {
