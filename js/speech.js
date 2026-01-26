@@ -383,7 +383,7 @@ export const speechMethods = {
         addScore('fr', /[àâçéèêëîïôûùüÿœ]/g, 2);
         addScore('pt', /[ãõçáéíóúâêôà]/g, 2);
         addScore('it', /[àèéìíòóù]/g, 2);
-        addScore('tr', /[ğüşöçıı]/g, 2);
+        addScore('tr', /[ğüşöçı]/g, 2);
         addScore('vi', /[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/g, 2);
 
         addScore('en', /\b(the|and|with|for|that|this|from|are)\b/g);
