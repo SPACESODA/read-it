@@ -1,4 +1,10 @@
 export const speechMethods = {
+    // Maximum time to wait for the speech synthesizer to become idle before forcing cancel (ms).
+    MAX_SPEAK_START_WAIT_MS: 500,
+    // Sentence-ending punctuation across Western + CJK scripts, with optional closing quotes/brackets.
+    LINE_END_PUNCTUATION_REGEX: /[.!?。！？…,:，;；：、][)"'’”》】]*$/,
+    // Vietnamese diacritics for heuristic scoring.
+    VIETNAMESE_DIACRITIC_REGEX: /[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/g,
     loadVoices() {
         // Some browsers populate voices asynchronously.
         this.voices = this.synth.getVoices();
@@ -87,21 +93,36 @@ export const speechMethods = {
 
     prepareSpeechText(text) {
         // Lightweight markdown cleanup for better speech output.
+        const CODE_BLOCK_REGEX = /```[\s\S]*?```/g;
+        const INLINE_CODE_REGEX = /`[^`]*`/g;
+        const IMAGE_LINK_REGEX = /!\[([^\]]*)\]\([^)]+\)/g;
+        const INLINE_LINK_REGEX = /\[([^\]]+)\]\([^)]+\)/g;
+        const HEADING_REGEX = /^#{1,6}\s*/gm;
+        const BLOCKQUOTE_REGEX = /^>\s?/gm;
+        const ORDERED_LIST_REGEX = /^\s*(\d+)[.)]\s+/gm;
+        const ALPHA_LIST_REGEX = /^\s*([A-Za-z])[.)]\s+/gm;
+        const BULLET_LIST_REGEX = /^\s*[-*+]\s+/gm;
+        const HR_REGEX = /^\s*([-*_]){3,}\s*$/gm;
+        const FOOTNOTE_DEF_REGEX = /^\[[^\]]+\]:\s*\S+/gm;
+        const STRIKE_REGEX = /~~([^~]+)~~/g;
+        const BOLD_REGEX = /(\*\*|__)(.*?)\1/g;
+        // Single emphasis markers (*text* or _text_) without consuming whitespace.
+        const ITALIC_REGEX = /(^|[\s>])(\*|_)([^*_]+?)\2(?=[\s<]|$)/g;
         let cleaned = (text || '').replace(/\r\n/g, '\n');
-        cleaned = cleaned.replace(/```[\s\S]*?```/g, ' ');
-        cleaned = cleaned.replace(/`[^`]*`/g, ' ');
-        cleaned = cleaned.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
-        cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-        cleaned = cleaned.replace(/^#{1,6}\s*/gm, '');
-        cleaned = cleaned.replace(/^>\s?/gm, '');
-        cleaned = cleaned.replace(/^\s*(\d+)[.)]\s+/gm, '$1. ');
-        cleaned = cleaned.replace(/^\s*([A-Za-z])[.)]\s+/gm, '$1. ');
-        cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, '');
-        cleaned = cleaned.replace(/^\s*([-*_]){3,}\s*$/gm, ' ');
-        cleaned = cleaned.replace(/^\[[^\]]+\]:\s*\S+/gm, ' ');
-        cleaned = cleaned.replace(/~~([^~]+)~~/g, '$1');
-        cleaned = cleaned.replace(/(\*\*|__)(.*?)\1/g, '$2');
-        cleaned = cleaned.replace(/(^|[\s>])(\*|_)([^*_]+?)\2(?=[\s<]|$)/g, '$1$3');
+        cleaned = cleaned.replace(CODE_BLOCK_REGEX, ' ');
+        cleaned = cleaned.replace(INLINE_CODE_REGEX, ' ');
+        cleaned = cleaned.replace(IMAGE_LINK_REGEX, '$1');
+        cleaned = cleaned.replace(INLINE_LINK_REGEX, '$1');
+        cleaned = cleaned.replace(HEADING_REGEX, '');
+        cleaned = cleaned.replace(BLOCKQUOTE_REGEX, '');
+        cleaned = cleaned.replace(ORDERED_LIST_REGEX, '$1. ');
+        cleaned = cleaned.replace(ALPHA_LIST_REGEX, '$1. ');
+        cleaned = cleaned.replace(BULLET_LIST_REGEX, '');
+        cleaned = cleaned.replace(HR_REGEX, ' ');
+        cleaned = cleaned.replace(FOOTNOTE_DEF_REGEX, ' ');
+        cleaned = cleaned.replace(STRIKE_REGEX, '$1');
+        cleaned = cleaned.replace(BOLD_REGEX, '$2');
+        cleaned = cleaned.replace(ITALIC_REGEX, '$1$3');
         cleaned = cleaned.replace(/[ \t]+/g, ' ');
         cleaned = cleaned.replace(/\s*\n\s*/g, '\n');
         cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
@@ -109,7 +130,7 @@ export const speechMethods = {
     },
 
     lineEndsWithPunctuation(line) {
-        return /[.!?。！？…,:，;；：、][)"'’”》】]*$/.test(line.trim());
+        return this.LINE_END_PUNCTUATION_REGEX.test(line.trim());
     },
 
     countLineChars(line) {
@@ -371,11 +392,25 @@ export const speechMethods = {
         }
 
         const lower = sample.toLowerCase();
+        const turkishLower = sample.toLocaleLowerCase('tr');
         const scores = new Map();
-        const addScore = (lang, regex, weight = 1) => {
-            const matches = lower.match(regex);
+        const addScore = (lang, regex, weight = 1, source = lower) => {
+            const matches = source.match(regex);
             if (!matches) return;
             scores.set(lang, (scores.get(lang) || 0) + matches.length * weight);
+        };
+        let supportsUnicodeWordBoundary = false;
+        try {
+            new RegExp('\\p{L}', 'u');
+            supportsUnicodeWordBoundary = true;
+        } catch (error) {
+            supportsUnicodeWordBoundary = false;
+        }
+        const addWordScore = (lang, words, weight = 1) => {
+            const pattern = supportsUnicodeWordBoundary
+                ? new RegExp(`(?:^|[^\\p{L}])(?:${words})(?=$|[^\\p{L}])`, 'gu')
+                : new RegExp(`\\b(?:${words})\\b`, 'g');
+            addScore(lang, pattern, weight);
         };
 
         addScore('de', /[äöüß]/g, 2);
@@ -383,15 +418,30 @@ export const speechMethods = {
         addScore('fr', /[àâçéèêëîïôûùüÿœ]/g, 2);
         addScore('pt', /[ãõçáéíóúâêôà]/g, 2);
         addScore('it', /[àèéìíòóù]/g, 2);
-        addScore('tr', /[ğüşöçı]/g, 2);
-        addScore('vi', /[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/g, 2);
+        addScore('tr', /[ğüşöçı]/g, 2, turkishLower);
+        addScore('vi', this.VIETNAMESE_DIACRITIC_REGEX, 2);
+        addScore('pl', /[ąćęłńóśżź]/g, 2);
+        addScore('cs', /[áčďéěíňóřšťúůýž]/g, 2);
+        addScore('hu', /[áéíóöőúüű]/g, 2);
+        addScore('ro', /[ăâîșțşţ]/g, 2);
+        addScore('sv', /[åäö]/g, 2);
+        addScore('da', /[æøå]/g, 2);
+        addScore('no', /[æøå]/g, 2);
+        addScore('fi', /[äö]/g, 1);
+        addScore('is', /[ðþáéíóúýæö]/g, 2);
 
-        addScore('en', /\b(the|and|with|for|that|this|from|are)\b/g);
-        addScore('es', /\b(el|la|los|las|que|para|con|por|una|un)\b/g);
-        addScore('fr', /\b(le|la|les|des|pour|avec|une|un)\b/g);
-        addScore('de', /\b(und|der|die|das|mit|für|ein|eine)\b/g);
-        addScore('it', /\b(il|lo|la|gli|che|per|con|una|un)\b/g);
-        addScore('pt', /\b(o|a|os|as|que|para|com|uma|um)\b/g);
+        addWordScore('en', 'the|and|with|for|that|this|from|are');
+        addWordScore('es', 'el|la|los|las|que|para|con|por|una|un');
+        addWordScore('fr', 'le|la|les|des|pour|avec|une|un');
+        addWordScore('de', 'und|der|die|das|mit|für|ein|eine');
+        addWordScore('it', 'il|lo|la|gli|che|per|con|una|un');
+        addWordScore('pt', 'o|a|os|as|que|para|com|uma|um');
+        addWordScore('nl', 'de|het|en|van|voor|met|een');
+        addWordScore('sv', 'och|det|att|som|med');
+        addWordScore('da', 'og|det|at|som|for|med|er');
+        addWordScore('no', 'og|det|at|som|for|med|er');
+        addWordScore('da', 'hvad|mig|dig|jer', 2);
+        addWordScore('no', 'hva|meg|deg|dere', 2);
 
         let bestLang = null;
         let bestScore = 0;
@@ -945,7 +995,10 @@ export const speechMethods = {
         const tryStart = () => {
             if (requestId !== this.speakRequestId) return;
 
-            if ((this.synth.speaking || this.synth.pending) && Date.now() - startTime < 500) {
+            if (
+                (this.synth.speaking || this.synth.pending)
+                && Date.now() - startTime < this.MAX_SPEAK_START_WAIT_MS
+            ) {
                 this.speakTimeoutId = setTimeout(tryStart, 30);
                 return;
             }
